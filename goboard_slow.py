@@ -31,7 +31,7 @@ class GoString():
         self.liberties.add(point)
 
     def remove_liberty(self, point):
-        self.libertie.remove(point)
+        self.liberties.remove(point)
     
     def merged_with(self, go_string):
         ''' Returns a merged chain of chains of both colors.'''
@@ -87,5 +87,97 @@ class Board():
                     adjucent_same_color.append(neighbor_string)
                 elif neighbor_string not in adjucent_opposite_color:
                     adjucent_opposite_color.append(neighbor_string)
-            new_string = GoString(player, [point], liberties)
+        new_string = GoString(player, [point], liberties)
+        for same_color_string in adjucent_same_color:
+            new_string =  new_string.merged_with(same_color_string)
+        for new_string_point in new_string.stones:
+            self._grid[new_string_point] = new_string
+        for other_color_string in adjucent_opposite_color:
+            other_color_string.remove_liberty(point)
+        for other_color_string in adjucent_opposite_color:
+            if other_color_string.num_liberties == 0:
+                self._remove_string(other_color_string)
 
+    def _remove_string(self, string):
+        ''' Deleting one chain can lead to increasing amount of freedoms
+            of other chains.
+        '''
+        for point in string.stones:
+            for neighbor in point.neighbors():
+                neighbor_string = self._grid.get(neighbor)
+                if neighbor_string is None:
+                    continue
+                if neighbor_string is not string:
+                    neighbor_string.add_liberty(point)
+            self._grid[point] = None
+
+class GameState():
+    def __init__(self, board, next_player, previous, move):
+        self.board = board
+        self.next_player = next_player
+        self.previous_state = previous
+        self.last_move = move
+
+    def get_next_board(self, move, player=None):
+        next_board = copy.deepcopy(self.board)
+        player = player or self.next_player
+        next_board.place_stone(player, move.point)
+        return next_board
+
+    def apply_move(self, move):
+        ''' Returns new game state after the move has being done.'''
+        if move.is_play:
+            next_board = self.get_next_board(move)
+        else:
+            next_board = self.board
+        return GameState(next_board, self.next_player.other, self, move)
+
+    @classmethod
+    def new_game(cls, board_size):
+        if isinstance(board_size, int):
+            board_size = (board_size, board_size)
+        board = Board(*board_size)
+        return GameState(board, Player.black, None, None)
+
+    def is_over(self):
+        if self.last_move is None:
+            return False
+        if self.last_move.is_resign:
+            return True
+        second_last_move = self.previous_state.last_move
+        if second_last_move is None:
+            return False
+        return self.last_move.is_pass and second_last_move.is_pass
+
+    def is_move_self_capture(self, player, move):
+        if not move.is_play:
+            return False
+        next_board = self.get_next_board(move, player)
+        new_string = next_board.get_go_string(move.point)
+        return new_string.num_liberties == 0
+
+    @property
+    def situation(self):
+        return(self.next_player, self.board)
+
+    def does_move_violate_ko(self, player, move):
+        if not move.is_play:
+            return False
+        next_board = self.get_next_board(move, player)
+        next_situation = (player.other, next_board)
+        past_state = self.previous_state
+        while past_state is not None:
+            if past_state.situation == next_situation:
+                return True
+            past_state = past_state.previous_state
+        return False
+
+    def is_valid_move(self, move):
+        if self.is_over():
+            return False
+        if move.is_pass or move.is_resign:
+            return True
+        return (
+            self.board.get(move.point) is None and
+            not self.is_move_self_capture(self.next_player, move) and
+            not self.does_move_violate_ko(self.next_player, move))
